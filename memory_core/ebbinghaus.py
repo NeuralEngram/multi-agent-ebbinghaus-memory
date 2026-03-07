@@ -57,3 +57,99 @@ def compute_retention(
 
     return max(0.0, min(round(retention, 6), 1.0))
 
+
+def reinforce_memory(stability_hours: float) -> float:
+
+    """
+        After a successful recall, stability increases.
+        Each reinforcement multiplies the stability factor.
+        The more times a memory is reviewed, the longer it persists.
+
+        Args:
+            stability_hours: Current stability before reinforcement.
+        
+        Returns:
+            New stability value, capped at MAX_STABLE_HOURS.
+    """
+
+    if stability_hours <= 0:
+        raise ValueError("stability_hours must be positive")
+    
+    new_stability = stability_hours * REINFORCEMENT_BOOST
+    return min(new_stability, MAX_STABLE_HOURS)
+
+
+def is_memory_forgotten(retention: float) -> bool:
+
+    """
+        Return True if retention has dropped below the forgetting threshold.
+    """
+    if not 0.0 <= retention <= 1.0:
+        raise ValueError("retention must be between 0 and 1")
+
+    return retention < RETENTION_THRESHOLD
+
+
+def time_until_forgotten(
+    last_reviewed_at: datetime,
+    stability_hours: float,
+    now: Optional[datetime] = None, ) -> float:
+
+    """
+    Estimate how many hours remain before this memory crosses the forgetting threshold.
+
+    Returns:
+        Hours remaining (0.0 if already forgotten).
+    """
+    if stability_hours <= 0:
+        raise ValueError("stability_hours must be positive")
+    
+    if last_reviewed_at.tzinfo is None:
+        raise ValueError("last_reviewed_at must be timezone-aware")
+    
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+
+
+    elapsed_hours = max((now - last_reviewed_at).total_seconds() / 3600.0, 0.0)
+
+    # Solve: RETENTION_THRESHOLD = e^(-(elapsed + remaining) / S)
+    # → remaining = -S * ln(threshold) - elapsed
+
+    threshold_hours = -stability_hours * math.log(RETENTION_THRESHOLD)
+    remaining = threshold_hours - elapsed_hours
+    return max(round(remaining, 4), 0.0)
+
+
+def decay_curve_points(
+    stability_hours: float,
+    num_points: int = 20, ) -> list[tuple[float, float]]:
+
+    """
+    Generate (time_hours, retention) data points along the decay curve.
+    Useful for debugging or visualisation.
+
+    Args:
+        stability_hours: Stability S to model.
+        num_points:      How many sample points to generate.
+
+    Returns:
+        List of (elapsed_hours, retention) tuples.
+    """
+    if stability_hours <= 0:
+        raise ValueError("stability_hours must be positive")
+
+    if num_points <= 0:
+        raise ValueError("num_points must be positive")
+    
+    # Sample up to 3× the point where retention hits the threshold
+    t_max = -stability_hours * math.log(RETENTION_THRESHOLD) * 3
+    step = t_max / max(num_points - 1, 1)
+
+    return [
+        (round(i * step, 3), round(math.exp(-(i * step) / stability_hours), 6))
+        for i in range(num_points)
+    ]
