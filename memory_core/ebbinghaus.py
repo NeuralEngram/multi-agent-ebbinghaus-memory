@@ -160,35 +160,3 @@ def decay_curve_points(
        (i * step, math.exp(-(i * step) / stability_hours))
         for i in range(num_points)
     ]
-
-if __name__ == "__main__":
-    from datetime import datetime, timezone, timedelta
-
-    # Simulate a memory reviewed 10 hours ago
-    now = datetime.now(timezone.utc)
-    last_reviewed = now - timedelta(hours=10)
-    stability = BASE_STABLE_HOURS  # 24.0 hours
-
-    # Retention
-    retention = compute_retention(last_reviewed, stability, now)
-    print(f"Retention after 10h: {retention:.4f}")
-
-    # Forgotten?
-    print(f"Forgotten: {is_memory_forgotten(retention)}")
-
-    # Time until forgotten
-    remaining = time_until_forgotten(last_reviewed, stability, now)
-    print(f"Hours until forgotten: {remaining:.2f}h")
-
-    # Reinforce with perfect recall
-    new_stability = reinforce_memory(stability, quality=1.0)
-    print(f"Stability after perfect recall: {new_stability:.2f}h")
-
-    # Reinforce with weak recall
-    new_stability_weak = reinforce_memory(stability, quality=0.3)
-    print(f"Stability after weak recall: {new_stability_weak:.2f}h")
-
-    # Decay curve sample
-    print("\nDecay curve (first 5 points):")
-    for t, r in decay_curve_points(stability)[:5]:
-        print(f"  t={t:.1f}h → R={r:.4f}")
