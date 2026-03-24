@@ -55,10 +55,10 @@ def compute_retention(
     elapsed_hours = max((now - last_reviewed_at).total_seconds() / 3600.0, 0.0)
     retention = math.exp(-elapsed_hours / stability_hours)
 
-    return max(0.0, min(round(retention, 6), 1.0))
+    return max(0.0, min(retention,1.0))
 
 
-def reinforce_memory(stability_hours: float) -> float:
+def reinforce_memory(stability_hours: float, quality: float = 1.0) -> float:
 
     """
         After a successful recall, stability increases.
@@ -67,15 +67,20 @@ def reinforce_memory(stability_hours: float) -> float:
 
         Args:
             stability_hours: Current stability before reinforcement.
+            quality: Recall quality from 0.0 (weak) to 1.0 (perfect).
+             Weak recalls give a smaller stability boost.
         
         Returns:
             New stability value, capped at MAX_STABLE_HOURS.
     """
-
     if stability_hours <= 0:
         raise ValueError("stability_hours must be positive")
     
-    new_stability = stability_hours * REINFORCEMENT_BOOST
+    if not 0.0 <=quality <= 1.0:
+        raise ValueError("quality must be between 0 and 1")
+    
+    boost = 1.0 + quality * (REINFORCEMENT_BOOST - 1.0)
+    new_stability = stability_hours * boost
     return min(new_stability, MAX_STABLE_HOURS)
 
 
@@ -118,10 +123,10 @@ def time_until_forgotten(
 
     # Solve: RETENTION_THRESHOLD = e^(-(elapsed + remaining) / S)
     # → remaining = -S * ln(threshold) - elapsed
-
+    stability_hours = min(stability_hours, MAX_STABLE_HOURS)
     threshold_hours = -stability_hours * math.log(RETENTION_THRESHOLD)
     remaining = threshold_hours - elapsed_hours
-    return max(round(remaining, 4), 0.0)
+    return max(remaining, 0.0)
 
 
 def decay_curve_points(
@@ -145,11 +150,45 @@ def decay_curve_points(
     if num_points <= 0:
         raise ValueError("num_points must be positive")
     
+    stability_hours = min(stability_hours, MAX_STABLE_HOURS)
+
     # Sample up to 3× the point where retention hits the threshold
     t_max = -stability_hours * math.log(RETENTION_THRESHOLD) * 3
     step = t_max / max(num_points - 1, 1)
 
     return [
-        (round(i * step, 3), round(math.exp(-(i * step) / stability_hours), 6))
+       (i * step, math.exp(-(i * step) / stability_hours))
         for i in range(num_points)
     ]
+
+if __name__ == "__main__":
+    from datetime import datetime, timezone, timedelta
+
+    # Simulate a memory reviewed 10 hours ago
+    now = datetime.now(timezone.utc)
+    last_reviewed = now - timedelta(hours=10)
+    stability = BASE_STABLE_HOURS  # 24.0 hours
+
+    # Retention
+    retention = compute_retention(last_reviewed, stability, now)
+    print(f"Retention after 10h: {retention:.4f}")
+
+    # Forgotten?
+    print(f"Forgotten: {is_memory_forgotten(retention)}")
+
+    # Time until forgotten
+    remaining = time_until_forgotten(last_reviewed, stability, now)
+    print(f"Hours until forgotten: {remaining:.2f}h")
+
+    # Reinforce with perfect recall
+    new_stability = reinforce_memory(stability, quality=1.0)
+    print(f"Stability after perfect recall: {new_stability:.2f}h")
+
+    # Reinforce with weak recall
+    new_stability_weak = reinforce_memory(stability, quality=0.3)
+    print(f"Stability after weak recall: {new_stability_weak:.2f}h")
+
+    # Decay curve sample
+    print("\nDecay curve (first 5 points):")
+    for t, r in decay_curve_points(stability)[:5]:
+        print(f"  t={t:.1f}h → R={r:.4f}")
