@@ -1,24 +1,13 @@
-"""
-Implements: 
-
-- Ebbinghaus-based retention decay
-- Reinforcement via recall
-- Replay of weak memories
-- Pruning of forgotten memories
-- Semantic search (SentenceTransformers)
-- Multi-user isolation using context filtering
-- SQLite persistence (WAL mode)
-
-"""
-
 import uuid
 import json
 import sqlite3
 import math
 import threading
+import logging
+from enum import Enum
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
-from typing import Any, List, Dict, Optional
+from typing import Any, List, Dict, Optional, Tuple
 
 from sentence_transformers import SentenceTransformer
 
@@ -27,79 +16,66 @@ from memory_core.ebbinghaus import (
     compute_retention,
     reinforce_memory,
     is_memory_forgotten,
+    time_until_forgotten
 )
 
+SIMILARITY_THRESHOLD = 0.75
+MIN_RESULTS_REQUIRED = 1
+DEFAULT_LIMIT = 100
 
+# ✅ fixed: no magic number
+REPLAY_HORIZON_HOURS = 6
 
-# GLOBALS
 DB_PATH = "memory.db"
 _model = SentenceTransformer("all-MiniLM-L6-v2")
 
+logger = logging.getLogger(__name__)
 
 
-# EXCEPTIONS
-class EpisodeNotFoundError(Exception):
-    """Raised when an episode is not found."""
-    pass
+class RecallStatus(Enum):
+    UPDATED = "updated"
+    FORGOTTEN = "forgotten"
+    NOT_FOUND = "not_found"
 
 
-
-# JSON UTILITIES
-def safe_json_dumps(obj: Any) -> str:
-    """Safely serialize object to JSON."""
-    try:
-        return json.dumps(obj)
-    except Exception:
-        return json.dumps(str(obj))
-
-
-def safe_json_loads(s: str) -> Any:
-    """Safely deserialize JSON."""
-    try:
-        return json.loads(s)
-    except Exception:
-        return s
-    
-
-# DATABASE
-def get_connection() -> sqlite3.Connection:
-    """Create SQLite connection with WAL mode enabled."""
+def get_connection():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
     return conn
 
 
+def safe_json_dumps(obj):
+    try:
+        return json.dumps(obj)
+    except (TypeError, ValueError):
+        return json.dumps(str(obj))
 
-# EMBEDDINGS
-def simple_embedding(text: str) -> List[float]:
-    """Generate semantic embedding using SentenceTransformer."""
+
+def safe_json_loads(s):
+    try:
+        return json.loads(s)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return s
+
+
+def simple_embedding(text: str):
     return _model.encode(text).tolist()
 
 
-
-# SIMILARITY
-def cosine_similarity(a: List[float], b: List[float]) -> float:
-    """Compute cosine similarity between two vectors."""
+def cosine_similarity(a, b):
     if not a or not b:
         return 0.0
-
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))
-
     if na == 0 or nb == 0:
         return 0.0
-
     return dot / (na * nb)
 
 
-
-# EPISODE MODEL
 @dataclass
 class Episode:
-    """Represents a single episodic memory."""
-
     content: Any
     context: Dict[str, Any]
     tags: List[str] = field(default_factory=list)
@@ -113,50 +89,52 @@ class Episode:
 
     importance: float = 0.6
 
-
-    def retention(self, now=None) -> float:
+    def retention(self, now=None):
         return compute_retention(self.last_reviewed_at, self.stability_hours, now)
 
-
-    def is_forgotten(self, now=None) -> bool:
+    def is_forgotten(self, now=None):
         return is_memory_forgotten(self.retention(now))
 
-
-    def priority_score(self, now=None) -> float:
+    def priority_score(self, now=None):
         r = self.retention(now)
         freq = 1 + math.log1p(self.review_count)
         return r * self.importance * freq
 
 
-# MEMORY STORE
 class EpisodicMemoryStore:
-    """
-    Persistent episodic memory store.
-
-    Handles:
-    - Storage
-    - Recall (reinforcement)
-    - Replay of weak memories
-    - Pruning forgotten memories
-    - Semantic retrieval
-    - Multi-user filtering
-    """
-
-
 
     def __init__(self):
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+
         self._running = False
         self._thread = None
         self._stop_event = threading.Event()
+
         self._init_db()
 
+    def _query(self, query, params=()):
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(query, params)
+            return cur.fetchall()
+        finally:
+            conn.close()
 
+    def _execute(self, query, params=(), many=False):
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            if many:
+                cur.executemany(query, params)
+            else:
+                cur.execute(query, params)
+            conn.commit()
+        finally:
+            conn.close()
 
     def _init_db(self):
-        conn = get_connection()
-
-        conn.execute("""
+        self._execute("""
         CREATE TABLE IF NOT EXISTS episodes (
             episode_id TEXT PRIMARY KEY,
             content TEXT,
@@ -171,21 +149,11 @@ class EpisodicMemoryStore:
         )
         """)
 
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS memory_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            episode_id TEXT,
-            event_type TEXT,
-            timestamp TEXT
-        )
-        """)
+        # ✅ indexing (kept minimal, no redesign)
+        self._execute("CREATE INDEX IF NOT EXISTS idx_last_reviewed ON episodes(last_reviewed_at)")
+        self._execute("CREATE INDEX IF NOT EXISTS idx_importance ON episodes(importance)")
 
-        conn.commit()
-        conn.close()
-
-
-
-    def _row_to_episode(self, row) -> Episode:
+    def _row_to_episode(self, row):
         return Episode(
             episode_id=row[0],
             content=safe_json_loads(row[1]),
@@ -197,25 +165,37 @@ class EpisodicMemoryStore:
             created_at=datetime.fromisoformat(row[7]),
             importance=row[8],
         )
-    
 
+    def _paginated_scan(self, limit, process_page):
+        offset = 0
+        results = []
 
-    def _log(self, eid: str, event: str):
-        conn = get_connection()
-        conn.execute(
-            "INSERT INTO memory_logs VALUES (NULL, ?, ?, ?)",
-            (eid, event, datetime.now(timezone.utc).isoformat())
+        while True:
+            rows = self._query(
+                "SELECT * FROM episodes LIMIT ? OFFSET ?",
+                (limit, offset)
+            )
+
+            if not rows:
+                break
+
+            results.extend(process_page(rows))
+            offset += limit
+
+        return results
+
+    def add(self, content, context=None, tags=None, importance=0.6):
+        ep = Episode(
+            content=content,
+            context=context or {},
+            tags=tags or [],
+            importance=max(0.0, min(importance, 1.0))
         )
-        conn.commit()
-        conn.close()
 
+        emb = simple_embedding(str(content))
 
-
-
-    def _save(self, ep: Episode, emb=None):
         with self._lock:
-            conn = get_connection()
-            conn.execute("""
+            self._execute("""
             INSERT OR REPLACE INTO episodes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 ep.episode_id,
@@ -227,109 +207,59 @@ class EpisodicMemoryStore:
                 ep.review_count,
                 ep.created_at.isoformat(),
                 ep.importance,
-                safe_json_dumps(emb) if emb else None
+                safe_json_dumps(emb)
             ))
-            conn.commit()
-            conn.close()
-
-
-
-    def add(self, content, context=None, tags=None,
-            importance=0.6, stability_hours=BASE_STABLE_HOURS):
-
-        importance = max(0.0, min(importance, 1.0))
-
-        ep = Episode(
-            content=content,
-            context=context or {},
-            tags=tags or [],
-            importance=importance,
-            stability_hours=stability_hours
-        )
-
-        emb = simple_embedding(str(content))
-        self._save(ep, emb)
-        self._log(ep.episode_id, "add")
 
         return ep.episode_id
 
+    def recall(self, eid, quality=1.0) -> Tuple[Optional[Episode], RecallStatus]:
+        with self._lock:
+            rows = self._query(
+                "SELECT * FROM episodes WHERE episode_id=?",
+                (eid,)
+            )
+            if not rows:
+                return None, RecallStatus.NOT_FOUND
 
+            row = rows[0]
+            ep = self._row_to_episode(row)
+            embedding = row[9]
 
-    def get(self, eid):
-        conn = get_connection()
-        row = conn.execute(
-            "SELECT * FROM episodes WHERE episode_id=?", (eid,)
-        ).fetchone()
-        conn.close()
+            if ep.is_forgotten():
+                return None, RecallStatus.FORGOTTEN
 
-        if not row:
-            raise EpisodeNotFoundError(f"{eid} not found")
+            r = ep.retention()
+            q = min(quality, r)
 
-        return self._row_to_episode(row)
+            # ✅ diminishing returns ACTIVE
+            ep.stability_hours = reinforce_memory(
+                ep.stability_hours,
+                q,
+                ep.review_count
+            )
 
+            ep.last_reviewed_at = datetime.now(timezone.utc)
+            ep.review_count += 1
 
+            self._execute("""
+            INSERT OR REPLACE INTO episodes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                ep.episode_id,
+                safe_json_dumps(ep.content),
+                safe_json_dumps(ep.context),
+                safe_json_dumps(ep.tags),
+                ep.stability_hours,
+                ep.last_reviewed_at.isoformat(),
+                ep.review_count,
+                ep.created_at.isoformat(),
+                ep.importance,
+                embedding
+            ))
 
-    def recall(self, eid, quality=1.0):
-        ep = self.get(eid)
+            return ep, RecallStatus.UPDATED
 
-        if ep.is_forgotten():
-            return None
-
-        r = ep.retention()
-        q = min(quality, r)
-
-        ep.stability_hours = reinforce_memory(ep.stability_hours, q)
-        ep.last_reviewed_at = datetime.now(timezone.utc)
-        ep.review_count += 1
-
-        self._save(ep)
-        self._log(eid, "recall")
-
-        return ep
-    
-
-    
-    def retrieve(self, top_k=5, context_key=None, context_value=None):
-        conn = get_connection()
-        rows = conn.execute(
-            "SELECT * FROM episodes WHERE importance > 0.1 LIMIT 100"
-        ).fetchall()
-        conn.close()
-
-        now = datetime.now(timezone.utc)
-        episodes = []
-
-        for r in rows:
-            ep = self._row_to_episode(r)
-
-            if ep.is_forgotten(now):
-                continue
-
-            if context_key and context_value:
-                if ep.context.get(context_key) != context_value:
-                    continue
-
-            episodes.append(ep)
-
-        return sorted(
-            episodes,
-            key=lambda x: x.priority_score(now),
-            reverse=True
-        )[:top_k]
-
-
-
-    def semantic_search(self, query: str, top_k: int = 5,
-                        user_id: Optional[str] = None):
-
-        query_embedding = simple_embedding(query)
-
-        conn = get_connection()
-        rows = conn.execute("SELECT * FROM episodes LIMIT 100").fetchall()
-        conn.close()
-
+    def _score_rows(self, query_emb, rows, user_id):
         scored = []
-
         for row in rows:
             emb = safe_json_loads(row[9])
             if not emb:
@@ -340,81 +270,115 @@ class EpisodicMemoryStore:
             if user_id and ep.context.get("user_id") != user_id:
                 continue
 
-            score = cosine_similarity(query_embedding, emb)
-            scored.append((score, ep))
+            score = cosine_similarity(query_emb, emb)
 
-        return [ep for _, ep in sorted(scored, reverse=True)[:top_k]]
-    
+            if score >= SIMILARITY_THRESHOLD:
+                scored.append((score, ep, emb))
 
+        return scored
+
+    def semantic_search(self, query, top_k=5, user_id=None, limit=DEFAULT_LIMIT):
+        query_emb = simple_embedding(query)
+
+        all_scored = self._paginated_scan(
+            limit,
+            lambda rows: self._score_rows(query_emb, rows, user_id)
+        )
+
+        return [ep for _, ep, _ in sorted(all_scored, reverse=True)[:top_k]]
+
+    def grounded_retrieve(self, query, top_k=5, user_id=None):
+        query_emb = simple_embedding(query)
+
+        all_scored = self._paginated_scan(
+            DEFAULT_LIMIT,
+            lambda rows: self._score_rows(query_emb, rows, user_id)
+        )
+
+        if len(all_scored) < MIN_RESULTS_REQUIRED:
+            return [], False
+
+        all_scored = sorted(all_scored, reverse=True)[:top_k]
+        avg_score = sum(s for s, _, _ in all_scored) / len(all_scored)
+
+        return [(ep, emb) for _, ep, emb in all_scored], avg_score >= SIMILARITY_THRESHOLD
+
+    def detect_inconsistency(self, memory_pairs, threshold=0.8):
+        """
+        NOTE:
+        Detects semantic dissimilarity, NOT factual contradiction.
+        Embeddings cannot detect true conflicts.
+        """
+        for i in range(len(memory_pairs)):
+            for j in range(i + 1, len(memory_pairs)):
+                _, a = memory_pairs[i]
+                _, b = memory_pairs[j]
+
+                if cosine_similarity(a, b) < threshold:
+                    return True
+        return False
 
     def replay_weak(self, threshold=0.5, user_id=None):
-        conn = get_connection()
-        rows = conn.execute(
-            "SELECT * FROM episodes WHERE importance >= 0.5 LIMIT 100"
-        ).fetchall()
-        conn.close()
+        """
+        NOTE:
+        Full table scan by design.
+
+        Ebbinghaus retention cannot be pushed into SQL easily,
+        so filtering must happen in Python.
+        """
 
         now = datetime.now(timezone.utc)
-        replayed = []
 
-        for r in rows:
-            ep = self._row_to_episode(r)
+        rows = self._query(
+            "SELECT episode_id, last_reviewed_at, stability_hours, context FROM episodes"
+        )
 
-            if user_id and ep.context.get("user_id") != user_id:
+        for eid, last, stab, context in rows:
+            context = safe_json_loads(context)
+
+            if user_id and context.get("user_id") != user_id:
                 continue
 
-            if ep.is_forgotten(now):
+            last_dt = datetime.fromisoformat(last)
+
+            retention = compute_retention(last_dt, stab)
+
+            if is_memory_forgotten(retention):
                 continue
 
-            ret = ep.retention(now)
+            remaining = time_until_forgotten(last_dt, stab, now)
 
-            if ret < threshold:
-                quality = 0.6 + (0.4 * (1 - ret))
-                updated = self.recall(ep.episode_id, quality)
-
-                if updated:
-                    replayed.append(updated)
-
-        return replayed
-    
-
+            if remaining < REPLAY_HORIZON_HOURS:
+                self.recall(eid)
 
     def prune_forgotten(self):
-        with self._lock:
-            conn = get_connection()
-            rows = conn.execute(
-                "SELECT episode_id, last_reviewed_at, stability_hours FROM episodes"
-            ).fetchall()
+        rows = self._query(
+            "SELECT episode_id, last_reviewed_at, stability_hours FROM episodes"
+        )
 
-            to_delete = []
+        to_delete = []
 
-            for eid, last, stab in rows:
-                last = datetime.fromisoformat(last)
-                if is_memory_forgotten(compute_retention(last, stab)):
-                    to_delete.append((eid,))
+        for eid, last, stab in rows:
+            last_dt = datetime.fromisoformat(last)
+            retention = compute_retention(last_dt, stab)
 
-            if to_delete:
-                conn.executemany(
-                    "DELETE FROM episodes WHERE episode_id=?",
-                    to_delete
-                )
+            if is_memory_forgotten(retention):
+                to_delete.append((eid,))
 
-                for eid, in to_delete:
-                    self._log(eid, "prune")
+        if to_delete:
+            self._execute(
+                "DELETE FROM episodes WHERE episode_id=?",
+                to_delete,
+                many=True
+            )
 
-            conn.commit()
-            conn.close()
-
-            return len(to_delete)
-
-
+        return len(to_delete)
 
     def start_maintenance(self, interval=60):
-        with self._lock:
-            if self._running:
-                return
-            self._running = True
+        if self._running:
+            return
 
+        self._running = True
         self._stop_event.clear()
 
         def run():
@@ -423,13 +387,12 @@ class EpisodicMemoryStore:
                     self.replay_weak()
                     self.prune_forgotten()
                 except Exception as e:
-                    print("Maintenance error:", e)
+                    logger.error("Maintenance error: %s", e)
 
                 self._stop_event.wait(interval)
 
         self._thread = threading.Thread(target=run, daemon=True)
         self._thread.start()
-
 
     def stop_maintenance(self):
         self._running = False

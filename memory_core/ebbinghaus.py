@@ -12,12 +12,13 @@
 
 import math 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List, Tuple
 
 
 #Memory decay configuration
 RETENTION_THRESHOLD = 0.3         #Memory is considered "Forgotten" below this value
-REINFORCEMENT_BOOST = 1.8         #Stability multiplier after a recall
+DEFAULT_REINFORCEMENT_BOOST = 1.8
+DEFAULT_DIMINISHING_FACTOR = 0.3
 BASE_STABLE_HOURS = 24.0          #Default stability for new memories
 MAX_STABLE_HOURS = 8760.0         #Maximum stability of 1 Year
 
@@ -58,7 +59,13 @@ def compute_retention(
     return max(0.0, min(retention,1.0))
 
 
-def reinforce_memory(stability_hours: float, quality: float = 1.0) -> float:
+def reinforce_memory(
+    stability_hours: float,
+    quality: float = 1.0,
+    review_count: int = 0,
+    boost: float = DEFAULT_REINFORCEMENT_BOOST,
+    diminishing_factor: float = DEFAULT_DIMINISHING_FACTOR
+) -> float:
 
     """
         After a successful recall, stability increases.
@@ -79,8 +86,12 @@ def reinforce_memory(stability_hours: float, quality: float = 1.0) -> float:
     if not 0.0 <=quality <= 1.0:
         raise ValueError("quality must be between 0 and 1")
     
-    boost = 1.0 + quality * (REINFORCEMENT_BOOST - 1.0)
-    new_stability = stability_hours * boost
+    if review_count < 0:
+        raise ValueError("review_count must be >= 0")
+    
+    decay = 1 / (1 + diminishing_factor * math.log1p(review_count))
+    effective_boost = 1.0 + quality * (boost - 1.0) * decay
+    new_stability = stability_hours * effective_boost
     return min(new_stability, MAX_STABLE_HOURS)
 
 
@@ -131,7 +142,7 @@ def time_until_forgotten(
 
 def decay_curve_points(
     stability_hours: float,
-    num_points: int = 20, ) -> list[tuple[float, float]]:
+    num_points: int = 20, ) -> List[Tuple[float, float]]:
 
     """
     Generate (time_hours, retention) data points along the decay curve.

@@ -2,8 +2,6 @@
 """
 Working Memory Module
 
-Thread-safe, fixed-capacity buffer for short-term conversational context.
-
 Simulates human working memory by maintaining a bounded window of recent
 interactions for prompt construction in LLM-based agents.
 
@@ -36,7 +34,7 @@ class WorkingMemory:
             raise ValueError("Capacity must be a positive integer")
 
         self.buffer: deque = deque(maxlen=capacity)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     #CAPACITY
     @property
@@ -48,8 +46,6 @@ class WorkingMemory:
     def add(self, role: Role, content: str, **metadata: Any) -> None:
         """
         Add a message to memory.
-
-        NOTE:
         Validation is done before acquiring the lock to reduce contention.
         """
         if not isinstance(role, Role):
@@ -134,10 +130,9 @@ class WorkingMemory:
 
     #DEBUG
     def __repr__(self) -> str:
-        """
-        Safe representation (no lock re-entry risk).
-        """
-        return f"WorkingMemory(capacity={self.buffer.maxlen}, size={len(self.buffer)})"
+        with self._lock:
+            return f"WorkingMemory(capacity={self.buffer.maxlen}, size={len(self.buffer)})"
+
 
     #FORMAT
     def format_for_prompt(
@@ -154,7 +149,10 @@ class WorkingMemory:
             snapshot = list(self.buffer)
 
         if mode == "json":
-            return json.dumps(snapshot, indent=2)
+            try:
+                return json.dumps(snapshot, indent=2)
+            except (TypeError, ValueError) as e:
+                raise ValueError(f"Memory contains non-JSON-serializable data: {e}")
 
         elif mode == "text":
             lines = []
@@ -177,3 +175,10 @@ class WorkingMemory:
             raise ValueError(
                 f"Unsupported mode '{mode}'. Use 'text' or 'json'."
             )
+        
+    def to_prompt_messages(self) -> List[Dict[str, str]]:
+        with self._lock:
+            return [
+                {"role": m["role"], "content": m["content"]}
+                for m in self.buffer
+            ]
