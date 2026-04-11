@@ -1,0 +1,1103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MAEM — Multi-Agent Ebbinghaus Memory</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0b0f;
+    --bg2: #0f1117;
+    --bg3: #161820;
+    --bg4: #1c1f2b;
+    --border: rgba(255,255,255,0.07);
+    --border2: rgba(255,255,255,0.13);
+    --text: #e8eaf0;
+    --text2: #8b90a0;
+    --text3: #555a6e;
+    --accent: #00d4aa;
+    --accent2: #0099ff;
+    --accent3: #ff6b6b;
+    --accent4: #ffd166;
+    --purple: #9b6dff;
+    --radius: 10px;
+    --radius-lg: 16px;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Syne', sans-serif;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Header ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+    height: 60px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg2);
+    flex-shrink: 0;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .logo-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    font-weight: 800;
+    color: #0a0b0f;
+    letter-spacing: -1px;
+  }
+
+  .logo-text {
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: var(--text);
+  }
+
+  .logo-sub {
+    font-size: 11px;
+    color: var(--text3);
+    font-family: 'Space Mono', monospace;
+    margin-top: 1px;
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .user-switcher {
+    display: flex;
+    gap: 6px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 4px;
+  }
+
+  .user-btn {
+    padding: 5px 14px;
+    border-radius: 5px;
+    border: none;
+    background: transparent;
+    color: var(--text2);
+    font-family: 'Syne', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .user-btn.active {
+    background: var(--accent);
+    color: #0a0b0f;
+  }
+
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* ── Main layout ── */
+  .main {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── Chat Panel ── */
+  .chat-panel {
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+    overflow: hidden;
+  }
+
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border2) transparent;
+  }
+
+  .msg {
+    display: flex;
+    gap: 12px;
+    animation: msgIn 0.3s ease;
+  }
+
+  @keyframes msgIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .msg.user { flex-direction: row-reverse; }
+
+  .avatar {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .avatar.agent-av {
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    color: #0a0b0f;
+  }
+
+  .avatar.user-av {
+    background: var(--bg4);
+    border: 1px solid var(--border2);
+    color: var(--text2);
+  }
+
+  .bubble {
+    max-width: 72%;
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    font-size: 14px;
+    line-height: 1.65;
+    color: var(--text);
+  }
+
+  .msg.agent .bubble {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-top-left-radius: 3px;
+  }
+
+  .msg.user .bubble {
+    background: var(--bg4);
+    border: 1px solid var(--border2);
+    border-top-right-radius: 3px;
+  }
+
+  .bubble-meta {
+    font-size: 11px;
+    color: var(--text3);
+    font-family: 'Space Mono', monospace;
+    margin-top: 5px;
+  }
+
+  .msg.user .bubble-meta { text-align: right; }
+
+  .memory-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    font-family: 'Space Mono', monospace;
+    color: var(--accent);
+    background: rgba(0, 212, 170, 0.1);
+    border: 1px solid rgba(0, 212, 170, 0.2);
+    border-radius: 4px;
+    padding: 2px 7px;
+    margin-top: 6px;
+  }
+
+  .typing-indicator {
+    display: flex;
+    gap: 4px;
+    padding: 14px 16px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    border-top-left-radius: 3px;
+    width: fit-content;
+  }
+
+  .typing-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text3);
+    animation: typing 1.2s infinite;
+  }
+
+  .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+  .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+  @keyframes typing {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+    30% { transform: translateY(-4px); opacity: 1; }
+  }
+
+  /* ── Chat Input ── */
+  .chat-input-area {
+    padding: 16px 28px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--bg2);
+  }
+
+  .input-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+  }
+
+  .chat-input {
+    flex: 1;
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: 'Syne', sans-serif;
+    font-size: 14px;
+    padding: 11px 16px;
+    resize: none;
+    outline: none;
+    min-height: 44px;
+    max-height: 120px;
+    transition: border-color 0.15s;
+  }
+
+  .chat-input:focus { border-color: var(--accent); }
+  .chat-input::placeholder { color: var(--text3); }
+
+  .send-btn {
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius);
+    background: var(--accent);
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+
+  .send-btn:hover { background: #00b894; transform: scale(1.04); }
+  .send-btn:disabled { background: var(--bg4); cursor: not-allowed; transform: none; }
+
+  .send-btn svg { width: 18px; height: 18px; }
+
+  /* ── Memory Panel ── */
+  .memory-panel {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg2);
+    overflow: hidden;
+  }
+
+  .panel-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .panel-title {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text3);
+  }
+
+  .panel-count {
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    color: var(--accent);
+    background: rgba(0,212,170,0.1);
+    border: 1px solid rgba(0,212,170,0.15);
+    border-radius: 4px;
+    padding: 2px 8px;
+  }
+
+  .memory-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border2) transparent;
+  }
+
+  .memory-card {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    transition: border-color 0.2s;
+    animation: cardIn 0.35s ease;
+  }
+
+  @keyframes cardIn {
+    from { opacity: 0; transform: translateX(10px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+
+  .memory-card.active { border-color: rgba(0,212,170,0.35); }
+  .memory-card.fresh  { border-color: rgba(0,153,255,0.3); }
+
+  .mem-content {
+    font-size: 12.5px;
+    color: var(--text);
+    line-height: 1.5;
+    margin-bottom: 10px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .mem-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+
+  .stat-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .stat-label {
+    font-size: 10px;
+    font-family: 'Space Mono', monospace;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .stat-value {
+    font-size: 12px;
+    font-family: 'Space Mono', monospace;
+    color: var(--text2);
+    font-weight: 700;
+  }
+
+  .retention-bar-wrap {
+    height: 4px;
+    background: var(--bg4);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 6px;
+  }
+
+  .retention-bar {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.6s ease;
+  }
+
+  .mem-role-tag {
+    display: inline-block;
+    font-size: 9px;
+    font-family: 'Space Mono', monospace;
+    padding: 2px 6px;
+    border-radius: 3px;
+    margin-bottom: 6px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+  }
+
+  .role-user { background: rgba(155,109,255,0.15); color: var(--purple); }
+  .role-agent { background: rgba(0,212,170,0.1); color: var(--accent); }
+
+  /* ── Stats bar at bottom ── */
+  .stats-footer {
+    padding: 12px 20px;
+    border-top: 1px solid var(--border);
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+  }
+
+  .footer-stat {
+    text-align: center;
+  }
+
+  .footer-stat-val {
+    font-family: 'Space Mono', monospace;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--accent);
+  }
+
+  .footer-stat-lbl {
+    font-size: 10px;
+    color: var(--text3);
+    margin-top: 2px;
+  }
+
+  /* ── API key overlay ── */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(10,11,15,0.96);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+
+  .api-card {
+    background: var(--bg2);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius-lg);
+    padding: 36px 40px;
+    width: 420px;
+    text-align: center;
+  }
+
+  .api-card h2 {
+    font-size: 22px;
+    font-weight: 800;
+    margin-bottom: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .api-card p {
+    font-size: 13px;
+    color: var(--text2);
+    margin-bottom: 24px;
+    line-height: 1.6;
+  }
+
+  .api-input {
+    width: 100%;
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    font-size: 13px;
+    padding: 12px 16px;
+    outline: none;
+    margin-bottom: 14px;
+    transition: border-color 0.15s;
+  }
+
+  .api-input:focus { border-color: var(--accent); }
+
+  .api-btn {
+    width: 100%;
+    padding: 12px;
+    background: var(--accent);
+    color: #0a0b0f;
+    font-family: 'Syne', sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    border: none;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .api-btn:hover { background: #00b894; }
+
+  .empty-mem {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 10px;
+    color: var(--text3);
+    font-size: 13px;
+    text-align: center;
+    padding: 20px;
+  }
+
+  .empty-icon {
+    font-size: 32px;
+    opacity: 0.3;
+  }
+
+  .curve-section {
+    padding: 0 14px 14px;
+  }
+
+  .curve-label {
+    font-size: 10px;
+    font-family: 'Space Mono', monospace;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+  }
+
+  canvas#ebbCanvas {
+    width: 100%;
+    height: 80px;
+    border-radius: 6px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    display: block;
+  }
+
+  .retrieved-flash {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 1px rgba(0,212,170,0.25);
+  }
+</style>
+</head>
+<body>
+
+<!-- API Key Overlay -->
+<div class="overlay" id="overlay">
+  <div class="api-card">
+    <div style="margin-bottom:16px;">
+      <div class="logo-icon" style="margin: 0 auto 12px; width:48px;height:48px;font-size:20px;">M</div>
+    </div>
+    <h2>MAEM Demo</h2>
+    <p>Multi-Agent Ebbinghaus Memory<br>Enter your Anthropic API key to begin</p>
+    <input type="password" class="api-input" id="apiKeyInput" placeholder="sk-ant-..." />
+    <button class="api-btn" onclick="startDemo()">Launch Demo</button>
+    <p style="margin-top:14px;font-size:11px;color:var(--text3);">Key stays in browser memory only</p>
+  </div>
+</div>
+
+<!-- Header -->
+<header>
+  <div class="logo">
+    <div class="logo-icon">M</div>
+    <div>
+      <div class="logo-text">MAEM</div>
+      <div class="logo-sub">Multi-Agent Ebbinghaus Memory</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="user-switcher">
+      <button class="user-btn active" onclick="switchUser('alice', this)">Alice</button>
+      <button class="user-btn" onclick="switchUser('bob', this)">Bob</button>
+      <button class="user-btn" onclick="switchUser('charlie', this)">Charlie</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text3);">
+      <div class="status-dot"></div>
+      <span id="modelLabel" style="font-family:'Space Mono',monospace;">claude-haiku</span>
+    </div>
+  </div>
+</header>
+
+<!-- Main -->
+<div class="main">
+
+  <!-- Chat Panel -->
+  <div class="chat-panel">
+    <div class="chat-messages" id="chatMessages">
+      <div class="msg agent">
+        <div class="avatar agent-av">M</div>
+        <div>
+          <div class="bubble">
+            Hello! I'm MAEM — a memory-augmented AI powered by the Ebbinghaus forgetting curve. I remember facts across sessions and reinforce memories based on recall quality.<br><br>
+            Try telling me your name, preferences, or anything you want me to remember!
+          </div>
+          <div class="bubble-meta">MAEM Agent · Ready</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="chat-input-area">
+      <div class="input-row">
+        <textarea class="chat-input" id="chatInput" placeholder="Type a message..." rows="1"
+          onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+        <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#0a0b0f" stroke-width="2.5" stroke-linecap="round">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Memory Panel -->
+  <div class="memory-panel">
+    <div class="panel-header">
+      <span class="panel-title">Episodic Memory</span>
+      <span class="panel-count" id="memCount">0 episodes</span>
+    </div>
+
+    <div class="memory-list" id="memoryList">
+      <div class="empty-mem" id="emptyMem">
+        <div class="empty-icon">◎</div>
+        <div>No memories yet</div>
+        <div style="font-size:11px;color:var(--text3);font-family:'Space Mono',monospace;">Start chatting to store episodes</div>
+      </div>
+    </div>
+
+    <!-- Ebbinghaus curve -->
+    <div class="curve-section">
+      <div class="curve-label">Retention Curve (Ebbinghaus)</div>
+      <canvas id="ebbCanvas" width="350" height="80" aria-label="Ebbinghaus forgetting curve visualization"></canvas>
+    </div>
+
+    <div class="stats-footer">
+      <div class="footer-stat">
+        <div class="footer-stat-val" id="statTotal">0</div>
+        <div class="footer-stat-lbl">Total</div>
+      </div>
+      <div class="footer-stat">
+        <div class="footer-stat-val" id="statAvgRetention">—</div>
+        <div class="footer-stat-lbl">Avg Retention</div>
+      </div>
+      <div class="footer-stat">
+        <div class="footer-stat-val" id="statRetrieved" style="color:var(--accent2)">0</div>
+        <div class="footer-stat-lbl">Retrieved</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let API_KEY = '';
+let currentUser = 'alice';
+let isLoading = false;
+let totalRetrieved = 0;
+
+const memories = { alice: [], bob: [], charlie: [] };
+const conversations = { alice: [], bob: [], charlie: [] };
+
+const BASE_STABLE_HOURS = 24;
+const MAX_STABLE_HOURS = 8760;
+const RETENTION_THRESHOLD = 0.3;
+
+function computeRetention(lastReviewedAt, stabilityHours) {
+  const now = Date.now();
+  const elapsedHours = (now - lastReviewedAt) / 3600000;
+  return Math.exp(-elapsedHours / Math.min(stabilityHours, MAX_STABLE_HOURS));
+}
+
+function reinforceMemory(stabilityHours, quality, reviewCount) {
+  const decay = 1.0 / (1.0 + 0.3 * Math.log1p(reviewCount));
+  const effectiveBoost = 1.0 + quality * (1.8 - 1.0) * decay;
+  return Math.min(stabilityHours * effectiveBoost, MAX_STABLE_HOURS);
+}
+
+function priorityScore(ep) {
+  const r = computeRetention(ep.lastReviewedAt, ep.stabilityHours);
+  const freq = 1 + Math.log1p(ep.reviewCount);
+  return r * ep.importance * freq;
+}
+
+function addMemory(content, role, importance = 0.6) {
+  const isQuestion = content.trim().endsWith('?');
+  const imp = isQuestion ? 0.2 : (role === 'user' ? importance : 0.5);
+  const ep = {
+    id: crypto.randomUUID(),
+    content,
+    role,
+    userId: currentUser,
+    stabilityHours: BASE_STABLE_HOURS,
+    lastReviewedAt: Date.now(),
+    reviewCount: 0,
+    importance: imp,
+    createdAt: Date.now(),
+  };
+  memories[currentUser].push(ep);
+  return ep;
+}
+
+function retrieveMemories(query, topK = 4) {
+  const userMems = memories[currentUser].filter(ep => !ep.content.trim().endsWith('?'));
+  if (userMems.length === 0) return [];
+  // Simple keyword-based scoring for frontend demo
+  const queryWords = query.toLowerCase().split(/\s+/);
+  const scored = userMems.map(ep => {
+    const contentLower = ep.content.toLowerCase();
+    let score = 0;
+    queryWords.forEach(w => { if (contentLower.includes(w)) score += 1; });
+    score = score / Math.max(queryWords.length, 1);
+    score = score * 0.6 + priorityScore(ep) * 0.4;
+    return { ep, score };
+  });
+  scored.sort((a,b) => b.score - a.score);
+  const top = scored.slice(0, topK).filter(x => x.score > 0);
+  top.forEach(({ ep }) => {
+    ep.stabilityHours = reinforceMemory(ep.stabilityHours, ep.reviewCount > 0 ? computeRetention(ep.lastReviewedAt, ep.stabilityHours) : 1.0, ep.reviewCount);
+    ep.lastReviewedAt = Date.now();
+    ep.reviewCount += 1;
+  });
+  return top.map(x => x.ep);
+}
+
+function startDemo() {
+  const key = document.getElementById('apiKeyInput').value.trim();
+  if (!key.startsWith('sk-')) {
+    alert('Please enter a valid Anthropic API key (starts with sk-)');
+    return;
+  }
+  API_KEY = key;
+  document.getElementById('overlay').style.display = 'none';
+}
+
+function switchUser(user, btn) {
+  currentUser = user;
+  document.querySelectorAll('.user-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  const msgs = document.getElementById('chatMessages');
+  msgs.innerHTML = '';
+  conversations[user].forEach(msg => {
+    appendBubble(msg.role, msg.content, msg.memUsed, false);
+  });
+  if (conversations[user].length === 0) {
+    appendBubble('agent', `Switched to ${user}'s memory silo.`, false, false);
+  }
+  loadMemories();
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+async function sendMessage() {
+  const input = document.getElementById('chatInput');
+  const text = input.value.trim();
+  if (!text || isLoading) return;
+  if (!API_KEY) { alert('Please enter your API key first.'); return; }
+
+  input.value = '';
+  input.style.height = 'auto';
+  setLoading(true);
+
+  appendBubble('user', text, false, true);
+
+  const typingId = showTyping();
+
+  try {
+    const res = await fetch('http://127.0.0.1:5000/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: text,
+        user_id: currentUser,
+        api_key: API_KEY,
+      })
+    });
+
+    const data = await res.json();
+    removeTyping(typingId);
+
+    if (data.error) throw new Error(data.error);
+
+    conversations[currentUser].push({ role: 'user', content: text });
+    conversations[currentUser].push({ role: 'agent', content: data.reply });
+
+    appendBubble('agent', data.reply, data.memory_used, true);
+    totalRetrieved += data.memory_used ? 1 : 0;
+    document.getElementById('statRetrieved').textContent = totalRetrieved;
+
+    await loadMemories();
+  } catch(e) {
+    removeTyping(typingId);
+    appendBubble('agent', `Error: ${e.message}`, false, true);
+  }
+
+  setLoading(false);
+}
+
+function appendBubble(role, content, memUsed = false, animate = true) {
+  const msgs = document.getElementById('chatMessages');
+  const isAgent = role === 'agent';
+
+  const avatarLabel = isAgent ? 'M' : currentUser[0].toUpperCase();
+  const avatarClass = isAgent ? 'agent-av' : 'user-av';
+  const msgClass = isAgent ? 'agent' : 'user';
+  const metaText = isAgent ? `MAEM · ${currentUser}'s silo` : currentUser;
+
+  const div = document.createElement('div');
+  div.className = `msg ${msgClass}`;
+  if (!animate) div.style.animation = 'none';
+
+  div.innerHTML = `
+    <div class="avatar ${avatarClass}">${avatarLabel}</div>
+    <div>
+      <div class="bubble">${escHtml(content)}</div>
+      ${memUsed ? `<div class="memory-badge">◈ memory retrieved</div>` : ''}
+      <div class="bubble-meta">${escHtml(metaText)}</div>
+    </div>
+  `;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function showTyping() {
+  const msgs = document.getElementById('chatMessages');
+  const id = 'typing-' + Date.now();
+  const div = document.createElement('div');
+  div.className = 'msg agent';
+  div.id = id;
+  div.innerHTML = `
+    <div class="avatar agent-av">M</div>
+    <div class="typing-indicator">
+      <div class="typing-dot"></div>
+      <div class="typing-dot"></div>
+      <div class="typing-dot"></div>
+    </div>
+  `;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  return id;
+}
+
+function removeTyping(id) {
+  const el = document.getElementById(id);
+  if (el) el.remove();
+}
+
+function setLoading(v) {
+  isLoading = v;
+  document.getElementById('sendBtn').disabled = v;
+}
+
+function renderMemoryPanel(activeIds = []) {
+  const list = document.getElementById('memoryList');
+  const userMems = memories[currentUser];
+
+  if (userMems.length === 0) {
+    list.innerHTML = `<div class="empty-mem" id="emptyMem">
+      <div class="empty-icon">◎</div>
+      <div>No memories yet</div>
+      <div style="font-size:11px;color:var(--text3);font-family:'Space Mono',monospace;">Start chatting to store episodes</div>
+    </div>`;
+    document.getElementById('memCount').textContent = '0 episodes';
+    return;
+  }
+
+  const sorted = [...userMems].sort((a,b) => priorityScore(b) - priorityScore(a));
+  document.getElementById('memCount').textContent = `${sorted.length} episode${sorted.length !== 1 ? 's' : ''}`;
+
+  list.innerHTML = sorted.map(ep => {
+    const retention = computeRetention(ep.lastReviewedAt, ep.stabilityHours);
+    const retPct = Math.round(retention * 100);
+    const stabHr = ep.stabilityHours.toFixed(1);
+    const pScore = priorityScore(ep).toFixed(3);
+    const isActive = activeIds.includes(ep.id);
+    const isFresh = (Date.now() - ep.createdAt) < 5000;
+    const barColor = retention > 0.7 ? '#00d4aa' : retention > 0.4 ? '#ffd166' : '#ff6b6b';
+    const roleTag = ep.role === 'user' ? 'role-user' : 'role-agent';
+    const roleLabel = ep.role === 'user' ? 'USER' : 'AGENT';
+
+    return `
+      <div class="memory-card ${isActive ? 'active' : ''} ${isFresh ? 'fresh' : ''}" id="mem-${ep.id}">
+        <span class="mem-role-tag ${roleTag}">${roleLabel}</span>
+        <div class="mem-content">${escHtml(ep.content)}</div>
+        <div class="mem-stats">
+          <div class="stat-item">
+            <div class="stat-label">Stability</div>
+            <div class="stat-value">${stabHr}h</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Reviews</div>
+            <div class="stat-value">${ep.reviewCount}</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Importance</div>
+            <div class="stat-value">${ep.importance.toFixed(2)}</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Priority</div>
+            <div class="stat-value">${pScore}</div>
+          </div>
+        </div>
+        <div class="retention-bar-wrap">
+          <div class="retention-bar" style="width:${retPct}%;background:${barColor};"></div>
+        </div>
+        <div style="font-size:10px;color:var(--text3);font-family:'Space Mono',monospace;margin-top:4px;">
+          Retention: ${retPct}%
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  drawEbbinghaus();
+}
+
+function updateStats() {
+  const userMems = memories[currentUser];
+  document.getElementById('statTotal').textContent = userMems.length;
+  if (userMems.length > 0) {
+    const avg = userMems.reduce((s, ep) => s + computeRetention(ep.lastReviewedAt, ep.stabilityHours), 0) / userMems.length;
+    document.getElementById('statAvgRetention').textContent = Math.round(avg * 100) + '%';
+  }
+}
+
+async function loadMemories() {
+  try {
+    const res = await fetch(`http://127.0.0.1:5000/memories?user_id=${currentUser}`);
+    const data = await res.json();
+    const statsRes = await fetch(`http://127.0.0.1:5000/stats?user_id=${currentUser}`);
+    const stats = await statsRes.json();
+
+    renderMemoryPanelFromDB(data.episodes);
+    document.getElementById('statTotal').textContent = stats.total;
+    document.getElementById('statAvgRetention').textContent = Math.round(stats.avg_retention * 100) + '%';
+  } catch(e) {
+    console.warn('Backend not reachable:', e.message);
+  }
+}
+
+function renderMemoryPanelFromDB(episodes) {
+  const list = document.getElementById('memoryList');
+  document.getElementById('memCount').textContent = `${episodes.length} episode${episodes.length !== 1 ? 's' : ''}`;
+
+  if (episodes.length === 0) {
+    list.innerHTML = `<div class="empty-mem"><div class="empty-icon">◎</div><div>No memories yet</div><div style="font-size:11px;color:var(--text3);font-family:'Space Mono',monospace;">Start chatting to store episodes</div></div>`;
+    drawEbbinghaus([]);
+    return;
+  }
+
+  list.innerHTML = episodes.map(ep => {
+    const retPct = Math.round(ep.retention * 100);
+    const barColor = ep.retention > 0.7 ? '#00d4aa' : ep.retention > 0.4 ? '#ffd166' : '#ff6b6b';
+    const roleTag = ep.role === 'user' ? 'role-user' : 'role-agent';
+    const roleLabel = ep.role === 'user' ? 'USER' : 'AGENT';
+
+    return `
+      <div class="memory-card">
+        <span class="mem-role-tag ${roleTag}">${roleLabel}</span>
+        <div class="mem-content">${escHtml(ep.content)}</div>
+        <div class="mem-stats">
+          <div class="stat-item">
+            <div class="stat-label">Stability</div>
+            <div class="stat-value">${ep.stability_hours}h</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Reviews</div>
+            <div class="stat-value">${ep.review_count}</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Importance</div>
+            <div class="stat-value">${ep.importance}</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Priority</div>
+            <div class="stat-value">${ep.priority_score}</div>
+          </div>
+        </div>
+        <div class="retention-bar-wrap">
+          <div class="retention-bar" style="width:${retPct}%;background:${barColor};"></div>
+        </div>
+        <div style="font-size:10px;color:var(--text3);font-family:'Space Mono',monospace;margin-top:4px;">
+          Retention: ${retPct}%
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  drawEbbinghaus(episodes.map(e => e.stability_hours));
+}
+
+function drawEbbinghaus(stabilityValues = []) {
+  const canvas = document.getElementById('ebbCanvas');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth * devicePixelRatio;
+  const H = canvas.offsetHeight * devicePixelRatio;
+  canvas.width = W;
+  canvas.height = H;
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+  const w = canvas.offsetWidth;
+  const h = canvas.offsetHeight;
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = '#161820';
+  ctx.fillRect(0, 0, w, h);
+
+  // Draw multiple curves for active memories
+  const userMems = stabilityValues.length > 0
+    ? stabilityValues.slice(0, 5)
+    : [24];
+
+  userMems.forEach((stab, i) => {
+    const alpha = 0.2 + (i === 0 ? 0.6 : 0.15);
+    drawCurve(ctx, w, h, stab, `rgba(0,212,170,${alpha})`);
+  });
+  // Threshold line
+  const threshY = h - (RETENTION_THRESHOLD * (h - 10)) - 4;
+  ctx.strokeStyle = 'rgba(255,107,107,0.4)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 4]);
+  ctx.beginPath();
+  ctx.moveTo(0, threshY);
+  ctx.lineTo(w, threshY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function drawCurve(ctx, w, h, stabilityHours, color) {
+  const tMax = stabilityHours * 3;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let x = 0; x <= w; x++) {
+    const t = (x / w) * tMax;
+    const r = Math.exp(-t / stabilityHours);
+    const y = h - (r * (h - 10)) - 4;
+    x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Load memories on startup
+setTimeout(loadMemories, 500);
+setTimeout(drawEbbinghaus, 100);
+</script>
+</body>
+</html>
