@@ -2,3 +2,4 @@
 flask-cors
 python-dotenv
 anthropic
+sentence-transformers
