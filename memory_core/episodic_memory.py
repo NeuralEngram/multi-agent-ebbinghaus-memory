@@ -110,6 +110,35 @@ def cosine_similarity(a: List[float], b: List[float]) -> float:
         return 0.0
     return dot / (na * nb)
 
+def compute_importance(text: str) -> float:
+    words = text.split()
+    length = len(words)
+
+    length_score = min(length / 20, 1.0)
+
+    has_number = any(c.isdigit() for c in text)
+    has_capital = any(w[0].isupper() for w in words if w)
+
+    specificity_score = 0.5
+    if has_number:
+        specificity_score += 0.2
+    if has_capital:
+        specificity_score += 0.2
+
+    personal_score = 0.0
+    if "i" in text.lower() or "my" in text.lower():
+        personal_score = 0.3
+
+    question_penalty = 0.2 if "?" in text else 0.0
+
+    score = (
+        0.4 * length_score +
+        0.3 * specificity_score +
+        0.3 * personal_score
+    ) - question_penalty
+
+    return max(0.05, min(score, 1.0))
+
 
 # ── Episode dataclass ─────────────────────────────────────────────────────────
 @dataclass
@@ -232,6 +261,20 @@ class EpisodicMemoryStore:
         self._execute(
             "CREATE INDEX IF NOT EXISTS idx_importance ON episodes(importance)"
         )
+    def find_similar_episode(self, content, threshold=0.80):
+        emb = simple_embedding(str(content))
+        rows = self._query("SELECT * FROM episodes")
+        text = str(content)
+        for row in rows:
+            existing_emb = safe_json_loads(row[9])
+            if not existing_emb:
+                continue
+
+            sim = cosine_similarity(emb, existing_emb)
+            if sim > threshold or (sim > 0.70 and len(text) < 50):
+                return self._row_to_episode(row), row[9], emb
+
+        return None, None, emb
 
     def _row_to_episode(self, row: tuple) -> Episode:
         return Episode(
@@ -271,7 +314,9 @@ class EpisodicMemoryStore:
         importance:        float = 0.6,
         agent_feedback:    float = 0.5,
         task_success_rate: float = 0.5,
-    ) -> str:
+    ) -> Optional[str]:
+        if context and str(context.get("role", "")).lower() == "assistant":
+            return None
         """
         Store a new episode.
 
@@ -286,15 +331,45 @@ class EpisodicMemoryStore:
         Returns:
             The new episode_id.
         """
+        content = self.consolidate_memories(content)
+        text = str(content)
+        importance = compute_importance(text)
+        if not should_store_memory(text, importance):
+            return None
+        existing_ep, existing_emb, emb = self.find_similar_episode(content)
+
+        if existing_ep:
+            existing_ep.review_count += 1
+            existing_ep.last_reviewed_at = datetime.now(timezone.utc)
+
+            self._execute(
+                "INSERT OR REPLACE INTO episodes VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    existing_ep.episode_id,
+                    safe_json_dumps(existing_ep.content),
+                    safe_json_dumps(existing_ep.context),
+                    safe_json_dumps(existing_ep.tags),
+                    existing_ep.stability_hours,
+                    existing_ep.last_reviewed_at.isoformat(),
+                    existing_ep.review_count,
+                    existing_ep.created_at.isoformat(),
+                    existing_ep.importance,
+                    existing_emb,
+                    existing_ep.agent_feedback,
+                    existing_ep.task_success_rate,
+                ),
+            )
+
+            return existing_ep.episode_id
         ep = Episode(
             content           = content,
             context           = context or {},
             tags              = tags or [],
-            importance        = max(0.0, min(importance, 1.0)),
+            importance        = importance,
             agent_feedback    = max(0.0, min(agent_feedback, 1.0)),
             task_success_rate = max(0.0, min(task_success_rate, 1.0)),
         )
-        emb = simple_embedding(str(content))
+        ep.stability_hours = BASE_STABLE_HOURS * importance
 
         with self._lock:
             self._execute(
@@ -340,10 +415,20 @@ class EpisodicMemoryStore:
             ep  = self._row_to_episode(row)
             embedding = row[9]
 
-            if ep.is_forgotten():
-                return None, RecallStatus.FORGOTTEN
+            r = ep.retention()
 
-            ep.stability_hours   = reinforce_memory(ep.stability_hours, quality, ep.review_count)
+            if r < 0.1:
+                return None, RecallStatus.FORGOTTEN
+            if ep.importance < 0.2:
+                return ep, RecallStatus.UPDATED
+            
+            effective_quality = quality * r * ep.importance
+
+            ep.stability_hours = reinforce_memory(
+                ep.stability_hours,
+                effective_quality,
+                ep.review_count
+            )
             ep.last_reviewed_at  = datetime.now(timezone.utc)
             ep.review_count     += 1
 
@@ -435,8 +520,11 @@ class EpisodicMemoryStore:
             ep = self._row_to_episode(row)
             if user_id and ep.context.get("user_id") != user_id:
                 continue
-            score = cosine_similarity(query_emb, emb)
-            if score >= SIMILARITY_THRESHOLD:
+            similarity = cosine_similarity(query_emb, emb)
+
+            if similarity >= SIMILARITY_THRESHOLD:
+                retention = ep.retention()
+                score = similarity * retention
                 scored.append((score, ep.episode_id, ep))
         return scored
 
@@ -550,6 +638,7 @@ class EpisodicMemoryStore:
         rows = self._query(
             "SELECT episode_id, last_reviewed_at, stability_hours, context FROM episodes"
         )
+        weak = []
         for eid, last, stab, context_raw in rows:
             context = safe_json_loads(context_raw)
             if user_id and context.get("user_id") != user_id:
@@ -560,7 +649,9 @@ class EpisodicMemoryStore:
                 continue
             remaining = time_until_forgotten(last_dt, stab, now)
             if remaining < REPLAY_HORIZON_HOURS:
-                self.recall(eid)
+                weak.append(eid)
+
+        return weak
 
     def prune_forgotten(self) -> int:
         rows = self._query(
@@ -604,3 +695,54 @@ class EpisodicMemoryStore:
         if self._thread:
             self._thread.join(timeout=2)
             logger.info("Maintenance thread stopped.")
+
+    def find_related_memories(self, content, threshold=0.75):
+        emb = simple_embedding(str(content))
+        rows = self._query("SELECT * FROM episodes")
+
+        related = []
+
+        for row in rows:
+            existing_emb = safe_json_loads(row[9])
+            if not existing_emb:
+             continue
+
+            sim = cosine_similarity(emb, existing_emb)
+
+            if sim > threshold:
+                related.append(self._row_to_episode(row))
+
+        return related
+    
+    def consolidate_memories(self, content):
+        related = self.find_related_memories(content)
+
+        if not related:
+            return content
+
+        texts = [str(ep.content) for ep in related]
+        texts.append(str(content))
+
+        seen = set()
+        ordered = []
+
+        for t in texts:
+            if t not in seen:
+                seen.add(t)
+                ordered.append(t)
+
+        merged = ". ".join(ordered)
+
+        return merged
+
+
+def should_store_memory(text: str, importance: float) -> bool:
+    # very weak → ignore completely
+    if importance < 0.15:
+        return False
+
+    # very short + low importance → ignore
+    if len(text.split()) <= 2 and importance < 0.2:
+        return False
+
+    return True

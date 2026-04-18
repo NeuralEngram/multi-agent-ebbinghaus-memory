@@ -231,3 +231,4 @@ class WorkingMemory:
                 {"role": m["role"], "content": m["content"]}
                 for m in self.buffer
             ]
+       
