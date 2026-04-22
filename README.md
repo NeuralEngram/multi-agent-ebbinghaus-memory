@@ -1,3 +1,12 @@
+---
+title: MAEM Multi Agent Ebbinghaus Memory
+emoji: 🧠
+colorFrom: green
+colorTo: blue
+sdk: docker
+pinned: false
+---
+
 # multi-agent-ebbinghaus-memory
 Multi-Agent AI Memory System using Ebbinghaus Forgetting Curve
 
