@@ -354,6 +354,8 @@ def chat(user_message: str, user_id: str = "default") -> str:
     return reply
 
 
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     user = "alice"

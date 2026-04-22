@@ -583,6 +583,27 @@
     border-color: var(--accent) !important;
     box-shadow: 0 0 0 1px rgba(0,212,170,0.25);
   }
+  .feedback-row {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.fb-btn {
+    background: transparent;
+    border: 1px solid var(--border2);
+    border-radius: 5px;
+    color: var(--text3);
+    font-size: 12px;
+    padding: 2px 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: 'Space Mono', monospace;
+}
+
+.fb-btn:hover { border-color: var(--accent); color: var(--accent); }
+.fb-btn.up.voted { border-color: #00d4aa; color: #00d4aa; background: rgba(0,212,170,0.1); }
+.fb-btn.down.voted { border-color: #ff6b6b; color: #ff6b6b; background: rgba(255,107,107,0.1); }
 </style>
 </head>
 <body>
@@ -812,7 +833,6 @@ async function sendMessage() {
   input.value = '';
   input.style.height = 'auto';
   setLoading(true);
-
   appendBubble('user', text, false, true);
 
   const typingId = showTyping();
@@ -835,21 +855,23 @@ async function sendMessage() {
 
     conversations[currentUser].push({ role: 'user', content: text });
     conversations[currentUser].push({ role: 'agent', content: data.reply });
-
-    appendBubble('agent', data.reply, data.memory_used, true);
+    console.log("retrieved_ids:", data.retrieved_ids);
+    console.log("memory_used:", data.memory_used);
+    appendBubble('agent', data.reply, data.memory_used, true, data.retrieved_ids || []);
     totalRetrieved += data.memory_used ? 1 : 0;
     document.getElementById('statRetrieved').textContent = totalRetrieved;
 
     await loadMemories();
   } catch(e) {
     removeTyping(typingId);
+    
     appendBubble('agent', `Error: ${e.message}`, false, true);
   }
 
   setLoading(false);
 }
 
-function appendBubble(role, content, memUsed = false, animate = true) {
+function appendBubble(role, content, memUsed = false, animate = true, retrievedIds = []) {
   const msgs = document.getElementById('chatMessages');
   const isAgent = role === 'agent';
 
@@ -861,12 +883,23 @@ function appendBubble(role, content, memUsed = false, animate = true) {
   const div = document.createElement('div');
   div.className = `msg ${msgClass}`;
   if (!animate) div.style.animation = 'none';
+  const idsAttr = JSON.stringify(retrievedIds).replace(/"/g, '&quot;');
+  const feedbackHtml = isAgent && retrievedIds.length > 0 ? `
+    <div class="feedback-row">
+      <button class="fb-btn up" onclick="sendFeedbackAll(this, JSON.parse(this.dataset.ids), 1.0)" data-ids="${idsAttr}">👍</button>
+      <button class="fb-btn down" onclick="sendFeedbackAll(this, JSON.parse(this.dataset.ids), 0.0)" data-ids="${idsAttr}">👎</button>
+    </div>` : '';
+
+
+
+
 
   div.innerHTML = `
     <div class="avatar ${avatarClass}">${avatarLabel}</div>
     <div>
       <div class="bubble">${escHtml(content)}</div>
       ${memUsed ? `<div class="memory-badge">◈ memory retrieved</div>` : ''}
+      ${feedbackHtml}
       <div class="bubble-meta">${escHtml(metaText)}</div>
     </div>
   `;
@@ -1094,6 +1127,25 @@ function drawCurve(ctx, w, h, stabilityHours, color) {
 function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+
+async function sendFeedbackAll(btn, episodeIds, score) {
+  const row = btn.parentElement;
+  row.querySelectorAll('.fb-btn').forEach(b => b.classList.remove('voted'));
+  btn.classList.add('voted');
+  try {
+    await Promise.all(episodeIds.map(id =>
+      fetch('http://127.0.0.1:5000/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ episode_id: id, score })
+      })
+    ));
+    await loadMemories();
+  } catch(e) {
+    console.warn('Feedback error:', e);
+  }
+}
+
 
 // Load memories on startup
 setTimeout(loadMemories, 500);

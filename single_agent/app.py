@@ -3,6 +3,7 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from dotenv import load_dotenv
 import anthropic
+import sqlite3
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from memory_core.episodic_memory import EpisodicMemoryStore
@@ -91,6 +92,7 @@ def chat():
 
         mems, grounded = store.grounded_retrieve(msg, top_k=5, user_id=uid)
         mems = [e for e in mems if not e.content.strip().endswith("?")]
+        mems = [e for e in mems if e.importance >= 0.15]
         if not mems:
             mems = store.get_top_by_priority(top_k=5, user_id=uid)
             mems = [e for e in mems if not e.content.strip().endswith("?")]
@@ -119,6 +121,26 @@ def chat():
     except Exception as e:
         logger.error("CHAT ERROR:\n%s", traceback.format_exc())
         return jsonify({"error": str(e)}), 500
+
+@app.route("/feedback", methods=["POST"])
+def feedback():
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        episode_id = data.get("episode_id")
+        score = float(data.get("score", 0.5))
+        if not episode_id:
+            return jsonify({"error": "missing episode_id"}), 400
+
+        success = store.update_feedback(
+            eid=episode_id,
+            agent_feedback=score,
+            task_success_rate=score
+        )
+        return jsonify({"ok": success})
+    except Exception as e:
+        logger.error("FEEDBACK ERROR: %s", traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
 
 if __name__ == "__main__":
     logger.info("STATIC_DIR = %s", STATIC_DIR)

@@ -52,7 +52,7 @@ from memory_core.ebbinghaus import (
 logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-SIMILARITY_THRESHOLD  = 0.30
+SIMILARITY_THRESHOLD  = 0.20
 MIN_RESULTS_REQUIRED  = 1
 DEFAULT_LIMIT         = 100
 REPLAY_HORIZON_HOURS  = 6
