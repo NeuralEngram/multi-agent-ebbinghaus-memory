@@ -145,5 +145,5 @@ def feedback():
 if __name__ == "__main__":
     logger.info("STATIC_DIR = %s", STATIC_DIR)
     logger.info("HTML exists = %s", os.path.exists(os.path.join(STATIC_DIR, "maem_demo.html")))
-    logger.info("Starting on http://127.0.0.1:5000")
-    app.run(debug=True, port=5000)
+    logger.info("Starting on http://0.0.0.0:7860")
+    app.run(host="0.0.0.0", port=7860, debug=False)
