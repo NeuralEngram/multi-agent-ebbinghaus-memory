@@ -835,7 +835,7 @@ async function sendMessage() {
   const typingId = showTyping();
 
   try {
-    const res = await fetch('http://127.0.0.1:5000/chat', {
+    const res = await fetch('https://multi-agent-ebbinghaus-memory-4.onrender.com/chat',{
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1007,9 +1007,9 @@ function updateStats() {
 
 async function loadMemories() {
   try {
-    const res = await fetch(`http://127.0.0.1:5000/memories?user_id=${currentUser}`);
+    const res = await fetch(`https://multi-agent-ebbinghaus-memory-4.onrender.com/memories?user_id=${currentUser}`);
     const data = await res.json();
-    const statsRes = await fetch(`http://127.0.0.1:5000/stats?user_id=${currentUser}`);
+    const statsRes = await fetch(`https://multi-agent-ebbinghaus-memory-4.onrender.com/memories?user_id=${currentUser}`);
     const stats = await statsRes.json();
 
     renderMemoryPanelFromDB(data.episodes);
@@ -1131,7 +1131,7 @@ async function sendFeedbackAll(btn, episodeIds, score) {
   btn.classList.add('voted');
   try {
     await Promise.all(episodeIds.map(id =>
-      fetch('http://127.0.0.1:5000/feedback', {
+      fetch('https://multi-agent-ebbinghaus-memory-4.onrender.com/feedback',{
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ episode_id: id, score })
