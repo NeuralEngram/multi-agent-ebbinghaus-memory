@@ -79,6 +79,8 @@ def chat():
         if not msg:
             return jsonify({"error": "missing params"}), 400
 
+       
+
         wm = get_wm(uid)
         wm.add(Role.USER, msg)
 
