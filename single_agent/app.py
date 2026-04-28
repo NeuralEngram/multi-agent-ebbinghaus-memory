@@ -2,7 +2,6 @@ import os, sys, logging, traceback
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from dotenv import load_dotenv
-import anthropic
 import sqlite3
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
@@ -74,14 +73,12 @@ def chat():
         data = request.get_json(force=True, silent=True) or {}
         msg = data.get("message", "").strip()
         uid = data.get("user_id", "default")
-        key = data.get("api_key", "")
 
-        logger.info("Chat request: uid=%s msg=%s key_len=%d", uid, msg[:30], len(key))
+        logger.info("Chat request: uid=%s msg=%s", uid, msg[:30])
 
-        if not msg or not key:
+        if not msg:
             return jsonify({"error": "missing params"}), 400
 
-        client = anthropic.Anthropic(api_key=key)
         wm = get_wm(uid)
         wm.add(Role.USER, msg)
 
@@ -107,9 +104,23 @@ def chat():
         else:
             sys_p = "You are MAEM. No stored memories yet. Do not invent facts."
 
-        resp = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=1024,
-                                      system=sys_p, messages=wm.to_prompt_messages())
-        reply = resp.content[0].text
+        # Gemini API call
+        import google.generativeai as genai
+        genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+        model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            system_instruction=sys_p
+        )
+        messages = wm.to_prompt_messages()
+        gemini_history = []
+        for m in messages[:-1]:
+            role = "user" if m["role"] == "user" else "model"
+            gemini_history.append({"role": role, "parts": [m["content"]]})
+
+        convo = model.start_chat(history=gemini_history)
+        response = convo.send_message(messages[-1]["content"])
+        reply = response.text
+
         wm.add(Role.ASSISTANT, reply)
         store.add(reply, context={"user_id": uid, "role": "assistant"}, importance=0.5,
                   agent_feedback=0.8 if grounded and mems else 0.5,
@@ -121,6 +132,8 @@ def chat():
     except Exception as e:
         logger.error("CHAT ERROR:\n%s", traceback.format_exc())
         return jsonify({"error": str(e)}), 500
+
+
 
 @app.route("/feedback", methods=["POST"])
 def feedback():
