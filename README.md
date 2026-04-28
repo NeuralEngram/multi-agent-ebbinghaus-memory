@@ -1,3 +1,18 @@
+
+---
+title: My App
+emoji: 🚀
+colorFrom: blue
+colorTo: purple
+sdk: python
+sdk_version: "3.10"
+app_file: app.py
+pinned: false
+---
+
+
+
+>>>>>>> space/main
 # multi-agent-ebbinghaus-memory
 Multi-Agent AI Memory System using Ebbinghaus Forgetting Curve
 
