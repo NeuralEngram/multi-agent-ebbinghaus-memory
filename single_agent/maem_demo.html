@@ -639,7 +639,7 @@
     </div>
     <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text3);">
       <div class="status-dot"></div>
-      <span id="modelLabel" style="font-family:'Space Mono',monospace;">claude-haiku</span>
+      <span id="modelLabel" style="font-family:'Space Mono',monospace;"> gemini-flash</span>
     </div>
   </div>
 </header>
@@ -1150,6 +1150,9 @@ async function sendFeedbackAll(btn, episodeIds, score) {
 // Load memories on startup
 setTimeout(loadMemories, 500);
 setTimeout(drawEbbinghaus, 100);
+
+// Auto-hide overlay, key handled by backend
+document.getElementById('overlay').style.display = 'none';
 </script>
 </body>
 </html>
