@@ -118,7 +118,7 @@ def classify_memory_type(content: str, use_llm_fallback: bool = True) -> str:
     if use_llm_fallback and len(content_stripped) < 300:
         try:
             classifier_model = genai.GenerativeModel(
-                model_name="gemini-1.5-flash",
+                model_name="gemini-2.0-flash",
                 system_instruction=(
                     "Classify the user statement into exactly one of these memory types: "
                     "preference, fact, event, goal, general.\n"
