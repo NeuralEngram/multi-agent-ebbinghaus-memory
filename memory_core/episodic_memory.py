@@ -64,12 +64,19 @@ W_AGENT_FEEDBACK   = 0.35
 W_TASK_SUCCESS     = 0.30
 
 def _get_embedding(text: str):
-    result = genai.embed_content(
-     model="text-embedding-004",
-    content=text,
-)
-   
-    return result["embedding"]
+    import hashlib
+    import math
+    # Simple deterministic embedding without API call
+    hash_val = hashlib.md5(text.encode()).hexdigest()
+    embedding = []
+    for i in range(0, min(len(hash_val), 32), 2):
+        val = int(hash_val[i:i+2], 16) / 255.0
+        embedding.append(val)
+    # Pad to 384 dimensions
+    while len(embedding) < 384:
+        embedding.append(0.0)
+    return embedding
+
 
 
 # ── Enums ─────────────────────────────────────────────────────────────────────
