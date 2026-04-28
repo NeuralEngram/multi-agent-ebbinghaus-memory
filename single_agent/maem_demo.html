@@ -789,10 +789,7 @@ function retrieveMemories(query, topK = 4) {
 
 function startDemo() {
   const key = document.getElementById('apiKeyInput').value.trim();
-  if (!key.startsWith('sk-')) {
-    alert('Please enter a valid Anthropic API key (starts with sk-)');
-    return;
-  }
+ 
   API_KEY = key;
   document.getElementById('overlay').style.display = 'none';
 }
@@ -828,7 +825,7 @@ async function sendMessage() {
   const input = document.getElementById('chatInput');
   const text = input.value.trim();
   if (!text || isLoading) return;
-  if (!API_KEY) { alert('Please enter your API key first.'); return; }
+  
 
   input.value = '';
   input.style.height = 'auto';
