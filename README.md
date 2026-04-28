@@ -52,7 +52,7 @@ memory_agent/
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env          # add your ANTHROPIC_API_KEY
+cp .env.example .env          # add ur api key
 python agent.py
 ```
 

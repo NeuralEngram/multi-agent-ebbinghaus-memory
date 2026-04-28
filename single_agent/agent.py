@@ -7,6 +7,8 @@ Gaps Filled
   priority_score() before truncating to top_k.
 - #4 Agent Learning: dissatisfaction detection drives update_feedback() with
   negative signals; continued engagement gives implicit positive signal.
+
+Updated: Switched from Anthropic Claude to Google Gemini API
 """
 
 import atexit
@@ -16,7 +18,7 @@ import re
 import sys
 
 from dotenv import load_dotenv
-import anthropic
+import google.generativeai as genai
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -34,11 +36,11 @@ logger = logging.getLogger(__name__)
 env_path = os.path.join(os.path.dirname(__file__), ".env")
 load_dotenv(env_path)
 
-api_key = os.getenv("ANTHROPIC_API_KEY")
+api_key = os.getenv("GOOGLE_API_KEY")
 if not api_key:
-    raise ValueError("ANTHROPIC_API_KEY not found in environment!")
+    raise ValueError("GOOGLE_API_KEY not found in environment!")
 
-client = anthropic.Anthropic(api_key=api_key)
+genai.configure(api_key=api_key)
 
 # ── Memory initialisation ─────────────────────────────────────────────────────
 store = EpisodicMemoryStore()
@@ -115,17 +117,16 @@ def classify_memory_type(content: str, use_llm_fallback: bool = True) -> str:
     # 2. LLM fallback for short/ambiguous statements
     if use_llm_fallback and len(content_stripped) < 300:
         try:
-            resp = client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=10,
-                system=(
+            classifier_model = genai.GenerativeModel(
+                model_name="gemini-1.5-flash",
+                system_instruction=(
                     "Classify the user statement into exactly one of these memory types: "
                     "preference, fact, event, goal, general.\n"
                     "Reply with only the single word type, nothing else."
                 ),
-                messages=[{"role": "user", "content": content_stripped}],
             )
-            mem_type = resp.content[0].text.strip().lower()
+            resp = classifier_model.generate_content(content_stripped)
+            mem_type = resp.text.strip().lower()
             if mem_type not in {"preference", "fact", "event", "goal", "general"}:
                 mem_type = "general"
             _classification_cache[content_stripped] = mem_type
@@ -230,7 +231,6 @@ def chat(user_message: str, user_id: str = "default") -> str:
 
     if personal:
         if is_preference_query(user_message):
-            # Pull all tagged preference memories — no keyword guessing
             memories = store.get_by_type(
                 memory_type="preference",
                 user_id=user_id,
@@ -239,23 +239,19 @@ def chat(user_message: str, user_id: str = "default") -> str:
             grounded = len(memories) > 0
 
         else:
-            # Gap #3 fix: fetch wider, then re-rank by full 4-signal priority_score
             memories, grounded = store.grounded_retrieve(
                 user_message,
                 top_k=10,
                 user_id=user_id,
             )
-            # Re-rank by priority_score (retention × 4-signal weighted formula)
             memories = sorted(
                 memories,
                 key=lambda ep: ep.priority_score(),
                 reverse=True,
             )[:5]
 
-        # Never surface questions as context
         memories = [ep for ep in memories if ep.context.get("memory_type") != "question"]
 
-        # Fallback: top-priority memories if retrieval came up empty
         if not memories:
             memories = store.get_top_by_priority(top_k=5, user_id=user_id)
             grounded = len(memories) > 0
@@ -269,7 +265,6 @@ def chat(user_message: str, user_id: str = "default") -> str:
     if grounded and memories:
         memories.sort(key=lambda ep: ep.priority_score(), reverse=True)
 
-        # Group by type for a cleaner prompt
         by_type: dict[str, list] = {}
         for ep in memories:
             t = ep.context.get("memory_type", "general")
@@ -303,17 +298,26 @@ def chat(user_message: str, user_id: str = "default") -> str:
     else:
         system_prompt = "You are MAEM, a helpful assistant."
 
-    # ── Call Claude ───────────────────────────────────────────────────────────
+    # ── Call Gemini ───────────────────────────────────────────────────────────
     messages = wm.to_prompt_messages()
 
-    response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=1024,
-        system=system_prompt,
-        messages=messages,
+    # Build conversation history for Gemini
+    gemini_history = []
+    for m in messages[:-1]:  # all except last message
+        role = "user" if m["role"] == "user" else "model"
+        gemini_history.append({
+            "role": role,
+            "parts": [m["content"]]
+        })
+
+    chat_model = genai.GenerativeModel(
+        model_name="gemini-1.5-flash",
+        system_instruction=system_prompt,
     )
 
-    reply = response.content[0].text
+    convo = chat_model.start_chat(history=gemini_history)
+    response = convo.send_message(messages[-1]["content"])
+    reply = response.text
 
     wm.add(Role.ASSISTANT, reply)
 
@@ -331,7 +335,6 @@ def chat(user_message: str, user_id: str = "default") -> str:
     # ── Gap #4: Agent learning via feedback signals ───────────────────────────
     if memories:
         if is_dissatisfied(user_message):
-            # Negative signal — decay these memories' influence
             for ep in memories:
                 store.update_feedback(
                     ep.episode_id,
@@ -343,7 +346,6 @@ def chat(user_message: str, user_id: str = "default") -> str:
                 len(memories),
             )
         else:
-            # Implicit positive signal — user engaged normally
             for ep in memories:
                 store.update_feedback(
                     ep.episode_id,
@@ -352,8 +354,6 @@ def chat(user_message: str, user_id: str = "default") -> str:
                 )
 
     return reply
-
-
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
