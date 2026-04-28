@@ -39,8 +39,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
 
-from sentence_transformers import SentenceTransformer
-
+import google.generativeai as genai
 from memory_core.ebbinghaus import (
     BASE_STABLE_HOURS,
     compute_retention,
@@ -64,7 +63,13 @@ W_TASK_IMPORTANCE  = 0.20
 W_AGENT_FEEDBACK   = 0.35
 W_TASK_SUCCESS     = 0.30
 
-_model = SentenceTransformer("all-MiniLM-L6-v2")
+def _get_embedding(text: str):
+    result = genai.embed_content(
+        model="models/embedding-001",
+        content=text,
+        task_type="retrieval_document"
+    )
+    return result["embedding"]
 
 
 # ── Enums ─────────────────────────────────────────────────────────────────────
@@ -97,7 +102,7 @@ def safe_json_loads(s: Any) -> Any:
 
 
 def simple_embedding(text: str) -> List[float]:
-    return _model.encode(text).tolist()
+    return _get_embedding(text)
 
 
 def cosine_similarity(a: List[float], b: List[float]) -> float:
